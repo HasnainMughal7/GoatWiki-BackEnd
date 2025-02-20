@@ -144,7 +144,7 @@ app.get('*', async (req, res, next) => {
     }
 });
 app.get('/api/getPostMetadata', async (req, res) => {
-    const { permalink } = req.query;
+    const permalink = req.query.link
     const cacheKey = `${cachePrefix}MetaDataByPermalink:${permalink}`
     const cachedData = cache.get(cacheKey)
     if (cachedData) {
