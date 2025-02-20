@@ -21,7 +21,9 @@
     "express-rate-limit": "^7.5.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.11.4",
-    "node-cache": "^5.1.2"
+    "node-cache": "^5.1.2",
+    "react-streaming": "^0.3.48",
+    "vite-plugin-ssr": "^0.4.85"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"

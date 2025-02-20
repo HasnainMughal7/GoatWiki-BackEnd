@@ -19,6 +19,7 @@ const pool = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 40,
     queueLimit: 0,
+    multipleStatements: true,
 }).promise();
 
 export async function getAllPosts() {
@@ -239,215 +240,161 @@ export async function getAllPosts() {
 }
 export async function getPostByLink(Permalink) {
     try {
-        const [rows] = await pool.query(`
-        SELECT DISTINCT
-            P.id AS Blog_id,
-            P.Title AS Blog_Title,
-            P.Category,
-            P.MetaTitle,
-            P.MetaDescription,
-            P.Permalink,
-            P.Keywords,
-            P.RelatedPosts,
-            P.NumOfEntries,
-            P.PublishingDate,
-            S.OrderNumber AS Section_OrderNum,
-            S.SectionType,
-            S.AnchorLink,
-            S.Content AS Section_Content,
-            I.ImgOrderNum AS Image_OrderNum,
-            I.SectionType AS Image_Type,
-            I.ImgPath AS Image_Path,
-            I.ImgAlt AS Image_Alt,
-            B.OrderNum AS Table_OrderNum,
-            B.Headers AS Table_Headers,
-            B.Table_content,
-            Q.id AS Faq_id,
-            Q.Que AS Faq_Que,
-            Q.Ans AS Faq_Ans
-        FROM Posts P
-        LEFT JOIN Sections S ON P.id = S.Post_id
-        LEFT JOIN Images I ON P.id = I.Post_id
-        LEFT JOIN BlogTables B ON P.id = B.Post_id
-        LEFT JOIN Qna Q ON P.id = Q.Post_id
-        WHERE P.Permalink = ?
-        ORDER BY S.OrderNumber;
-    `, [Permalink]);
+        await pool.query('SET SESSION max_statement_time = 100;')
+        // Fetch main post details
+        const [postRows] = await pool.query(`
+            SELECT 
+                id AS Blog_id, 
+                Title AS Blog_Title, 
+                Category, 
+                MetaTitle, 
+                MetaDescription, 
+                Permalink, 
+                Keywords, 
+                RelatedPosts, 
+                NumOfEntries, 
+                PublishingDate
+            FROM Posts 
+            WHERE Permalink = ? 
+            LIMIT 1;
+        `, [Permalink]);
 
-        let Posts = {}
+        if (postRows.length === 0) return null;
 
-        rows.forEach(row => {
-            const {
-                Blog_id,
-                Blog_Title,
-                Category,
-                MetaTitle,
-                MetaDescription,
-                Permalink,
-                Keywords,
-                RelatedPosts,
-                NumOfEntries,
-                PublishingDate,
-                Section_OrderNum,
-                SectionType,
-                AnchorLink,
-                Section_Content,
-                Image_OrderNum,
-                Image_Type,
-                Image_Path,
-                Image_Alt,
-                Table_OrderNum,
-                Table_Headers,
-                Table_content,
-                Faq_id,
-                Faq_Que,
-                Faq_Ans,
-            } = row
+        const post = postRows[0];
 
-            if (!Posts[Blog_id]) {
-                Posts[Blog_id] = {
-                    id: Blog_id,
-                    Title: Blog_Title,
-                    Category,
-                    FPic: null,
-                    FPicAlt: null,
-                    Sections: [],
-                    faqs: [],
-                    RelatedPosts: RelatedPosts ? RelatedPosts.split(',') : [],
-                    NumOfEntries,
-                    MetaTitle,
-                    MetaDescription,
-                    Permalink,
-                    Keywords,
-                    PublishingDate,
-                }
+        // Fetch sections
+        const [sections] = await pool.query(`
+            SELECT 
+                OrderNumber AS Section_OrderNum, 
+                SectionType, 
+                AnchorLink, 
+                Content AS Section_Content
+            FROM Sections 
+            WHERE Post_id = ? 
+            ORDER BY OrderNumber;
+        `, [post.Blog_id]);
+
+        // Fetch images
+        const [images] = await pool.query(`
+            SELECT 
+                ImgOrderNum AS Image_OrderNum, 
+                SectionType AS Image_Type, 
+                ImgPath AS Image_Path, 
+                ImgAlt AS Image_Alt
+            FROM Images 
+            WHERE Post_id = ? 
+            ORDER BY ImgOrderNum;
+        `, [post.Blog_id]);
+
+        // Fetch tables
+        const [tables] = await pool.query(`
+            SELECT 
+                OrderNum AS Table_OrderNum, 
+                Headers AS Table_Headers, 
+                Table_content
+            FROM BlogTables 
+            WHERE Post_id = ? 
+            ORDER BY OrderNum;
+        `, [post.Blog_id]);
+
+        // Fetch FAQs
+        const [faqs] = await pool.query(`
+            SELECT 
+                id AS Faq_id, 
+                Que AS Faq_Que, 
+                Ans AS Faq_Ans
+            FROM Qna 
+            WHERE Post_id = ?;
+        `, [post.Blog_id]);
+
+        // Process Sections
+        const formattedSections = [];
+        const formattedData = {};
+
+        sections.forEach(section => {
+            const { Section_OrderNum, SectionType, Section_Content, AnchorLink } = section;
+
+            if (SectionType === "para" || SectionType === "head" || SectionType === "anchor") {
+                formattedSections.push({
+                    Section_OrderNum,
+                    Type: SectionType,
+                    Content: Section_Content,
+                    AnchorLink,
+                });
             }
 
-            if (Image_Type === "Featuring_Image" && Image_OrderNum !== null) {
-                Posts[Blog_id].FPic = Image_Path;
-                Posts[Blog_id].FPicAlt = Image_Alt;
-            }
+            const keyPrefix =
+                SectionType === "para" ? "Para" :
+                SectionType === "head" ? "Head" :
+                SectionType === "anchor" ? "AnchorWord" : null;
 
-            if (SectionType && Section_OrderNum !== null) {
-                const existingSection = Posts[Blog_id].Sections.find(
-                    section =>
-                        section.Section_OrderNum === Number(Section_OrderNum) &&
-                        section.Type === SectionType
-                );
-
-                if (!existingSection) {
-                    Posts[Blog_id].Sections.push({
-                        Section_OrderNum: Number(Section_OrderNum),
-                        Type: SectionType,
-                        Content: Section_Content,
-                        AnchorLink,
-                    });
+            if (keyPrefix) {
+                formattedData[`${keyPrefix}${Section_OrderNum}`] = Section_Content;
+                if (SectionType === "anchor") {
+                    formattedData[`AnchorLink${Section_OrderNum}`] = AnchorLink;
                 }
             }
+        });
 
-            if (Image_Type === "Img" && Image_OrderNum !== null) {
-                const existingImage = Posts[Blog_id].Sections.find(
-                    section =>
-                        section.Section_OrderNum === Number(Image_OrderNum) &&
-                        section.Type === "Img" &&
-                        section.ImgPath === Image_Path
-                );
+        // Process Images
+        let featureImage = null, featureImageAlt = null;
+        images.forEach(image => {
+            if (image.Image_Type === "Featuring_Image") {
+                featureImage = image.Image_Path;
+                featureImageAlt = image.Image_Alt;
+            } else {
+                formattedSections.push({
+                    Section_OrderNum: image.Image_OrderNum,
+                    Type: "Img",
+                    ImgPath: image.Image_Path,
+                    ImgAlt: image.Image_Alt,
+                });
 
-                if (!existingImage) {
-                    Posts[Blog_id].Sections.push({
-                        Section_OrderNum: Number(Image_OrderNum),
-                        Type: "Img",
-                        ImgPath: Image_Path,
-                        ImgAlt: Image_Alt,
-                    });
-                }
+                formattedData[`Pic${image.Image_OrderNum}`] = image.Image_Path;
+                formattedData[`AltPic${image.Image_OrderNum}`] = image.Image_Alt;
             }
+        });
 
-            if (Table_OrderNum !== null) {
-                const existingTable = Posts[Blog_id].Sections.find(
-                    section =>
-                        section.Section_OrderNum === Number(Table_OrderNum) &&
-                        section.Type === "Table"
-                );
-
-                if (!existingTable) {
-                    Posts[Blog_id].Sections.push({
-                        Section_OrderNum: Number(Table_OrderNum),
-                        Type: "Table",
-                        Headers: Table_Headers,
-                        Content: JSON.parse(Table_content),
-                    });
-                }
-
-            }
-
-            if (Faq_id !== null) {
-                const existingFaq = Posts[Blog_id].faqs.find(
-                    faq =>
-                        faq.id === Number(Faq_id)
-                );
-                if (!existingFaq) {
-                    Posts[Blog_id].faqs.push({
-                        id: Number(Faq_id),
-                        [`Qs${Faq_id}`]: Faq_Que,
-                        [`Ans${Faq_id}`]: Faq_Ans,
-                    });
-                }
-            }
-        })
-
-        const formattedData = Object.values(Posts).map(post => {
-            const sections = {};
-            post.Sections.sort((a, b) => a.Section_OrderNum - b.Section_OrderNum).forEach((section, index) => {
-                const keyPrefix =
-                    section.Type === "para" ? "Para" :
-                        section.Type === "head" ? "Head" :
-                            section.Type === "Img" ? "Pic" :
-                                section.Type === "Table" ? "table" :
-                                    section.Type === "anchor" ? "AnchorWord" : null;
-
-                if (keyPrefix) {
-                    const key = `${keyPrefix}${section.Section_OrderNum}`;
-                    if (section.Type === "anchor") {
-                        sections[key] = section.Content;
-                        sections[`AnchorLink${section.Section_OrderNum}`] = section.AnchorLink;
-                    }
-                    else if (section.Type === "Img") {
-                        sections[key] = section.ImgPath
-                        sections[`Alt${key}`] = section.ImgAlt
-                    }
-                    else if (section.Type === "Table") {
-                        sections[key] = {
-                            headers: section.Headers.split(','),
-                            rows: section.Content
-                        }
-                    }
-                    else {
-                        sections[key] = section.Content;
-                    }
-
-                }
+        // Process Tables
+        tables.forEach(table => {
+            formattedSections.push({
+                Section_OrderNum: table.Table_OrderNum,
+                Type: "Table",
+                Headers: table.Table_Headers.split(','),
+                Content: JSON.parse(table.Table_content),
             });
 
-            return {
-                id: post.id,
-                Title: post.Title,
-                Category: post.Category,
-                FPic: post.FPic,
-                FPicAlt: post.FPicAlt,
-                ...sections,
-                faqs: post.faqs,
-                RelatedPosts: post.RelatedPosts,
-                NumOfEntries: post.NumOfEntries,
-                metaTitle: post.MetaTitle,
-                metaDescription: post.MetaDescription,
-                metaPermalink: post.Permalink,
-                keywords: post.Keywords,
-                PublishingDate: post.PublishingDate,
-
+            formattedData[`table${table.Table_OrderNum}`] = {
+                headers: table.Table_Headers.split(','),
+                rows: JSON.parse(table.Table_content),
             };
         });
-        return formattedData[0]
+
+        // Process FAQs
+        const formattedFAQs = faqs.map(faq => ({
+            id: faq.Faq_id,
+            [`Qs${faq.Faq_id}`]: faq.Faq_Que,
+            [`Ans${faq.Faq_id}`]: faq.Faq_Ans,
+        }));
+
+        // Construct Final Object
+        return {
+            id: post.Blog_id,
+            Title: post.Blog_Title,
+            Category: post.Category,
+            FPic: featureImage,
+            FPicAlt: featureImageAlt,
+            ...formattedData,
+            faqs: formattedFAQs,
+            RelatedPosts: post.RelatedPosts ? post.RelatedPosts.split(',') : [],
+            NumOfEntries: post.NumOfEntries,
+            metaTitle: post.MetaTitle,
+            metaDescription: post.MetaDescription,
+            metaPermalink: post.Permalink,
+            keywords: post.Keywords,
+            PublishingDate: post.PublishingDate,
+        };
     } catch (err) {
         console.error(err);
         return null;
@@ -455,170 +402,140 @@ export async function getPostByLink(Permalink) {
 }
 export async function getPostById(postId) {
     try {
-        const [rows] = await pool.query(`
-        SELECT DISTINCT
-            P.id AS Blog_id,
-            P.Title AS Blog_Title,
-            P.Category,
-            P.MetaTitle,
-            P.MetaDescription,
-            P.Permalink,
-            P.Keywords,
-            P.RelatedPosts,
-            P.NumOfEntries,
-            P.PublishingDate,
-            S.OrderNumber AS Section_OrderNum,
-            S.SectionType,
-            S.AnchorLink,
-            S.Content AS Section_Content,
-            I.ImgOrderNum AS Image_OrderNum,
-            I.SectionType AS Image_Type,
-            I.ImgPath AS Image_Path,
-            I.ImgAlt AS Image_Alt,
-            B.OrderNum AS Table_OrderNum,
-            B.Headers AS Table_Headers,
-            B.Table_content,
-            Q.id AS Faq_id,
-            Q.Que AS Faq_Que,
-            Q.Ans AS Faq_Ans
-        FROM Posts P
-        LEFT JOIN Sections S ON P.id = S.Post_id
-        LEFT JOIN Images I ON P.id = I.Post_id
-        LEFT JOIN BlogTables B ON P.id = B.Post_id
-        LEFT JOIN Qna Q ON P.id = Q.Post_id
-        WHERE P.id = ${postId}
-        ORDER BY S.OrderNumber;
-    `);
+        await pool.query('SET SESSION max_statement_time = 100;')
+        // Fetch main post details
+        const [postRows] = await pool.query(`
+            SELECT 
+                id AS Blog_id, 
+                Title AS Blog_Title, 
+                Category, 
+                MetaTitle, 
+                MetaDescription, 
+                Permalink, 
+                Keywords, 
+                RelatedPosts, 
+                NumOfEntries, 
+                PublishingDate
+            FROM Posts 
+            WHERE id = ? 
+            LIMIT 1;
+        `, [postId]);
 
-        let Posts = {}
+        if (postRows.length === 0) return null;
 
-        rows.forEach(row => {
-            const {
-                Blog_id,
-                Blog_Title,
-                Category,
-                MetaTitle,
-                MetaDescription,
-                Permalink,
-                Keywords,
-                RelatedPosts,
-                NumOfEntries,
-                PublishingDate,
-                Section_OrderNum,
-                SectionType,
-                AnchorLink,
-                Section_Content,
-                Image_OrderNum,
-                Image_Type,
-                Image_Path,
-                Image_Alt,
-                Table_OrderNum,
-                Table_Headers,
-                Table_content,
-                Faq_id,
-                Faq_Que,
-                Faq_Ans,
-            } = row
+        const post = postRows[0];
 
-            if (!Posts[Blog_id]) {
-                Posts[Blog_id] = {
-                    id: Blog_id,
-                    Title: Blog_Title,
-                    Category,
-                    FPic: null,
-                    FPicAlt: null,
-                    Sections: [],
-                    faqs: [],
-                    RelatedPosts: RelatedPosts ? RelatedPosts.split(',') : [],
-                    NumOfEntries,
-                    MetaTitle,
-                    MetaDescription,
-                    Permalink,
-                    Keywords,
-                    PublishingDate,
-                }
+        // Fetch sections
+        const [sections] = await pool.query(`
+            SELECT 
+                OrderNumber AS Section_OrderNum, 
+                SectionType, 
+                AnchorLink, 
+                Content AS Section_Content
+            FROM Sections 
+            WHERE Post_id = ? 
+            ORDER BY OrderNumber;
+        `, [post.Blog_id]);
+
+        // Fetch images
+        const [images] = await pool.query(`
+            SELECT 
+                ImgOrderNum AS Image_OrderNum, 
+                SectionType AS Image_Type, 
+                ImgPath AS Image_Path, 
+                ImgAlt AS Image_Alt
+            FROM Images 
+            WHERE Post_id = ? 
+            ORDER BY ImgOrderNum;
+        `, [post.Blog_id]);
+
+        // Fetch tables
+        const [tables] = await pool.query(`
+            SELECT 
+                OrderNum AS Table_OrderNum, 
+                Headers AS Table_Headers, 
+                Table_content
+            FROM BlogTables 
+            WHERE Post_id = ? 
+            ORDER BY OrderNum;
+        `, [post.Blog_id]);
+
+        // Fetch FAQs
+        const [faqs] = await pool.query(`
+            SELECT 
+                id AS Faq_id, 
+                Que AS Faq_Que, 
+                Ans AS Faq_Ans
+            FROM Qna 
+            WHERE Post_id = ?;
+        `, [post.Blog_id]);
+
+        // Process Sections
+        const formattedSections = [];
+
+        sections.forEach(section => {
+            const { Section_OrderNum, SectionType, Section_Content, AnchorLink } = section;
+
+            if (SectionType === "para" || SectionType === "head" || SectionType === "anchor") {
+                formattedSections.push({
+                    Section_OrderNum,
+                    Type: SectionType,
+                    Content: Section_Content,
+                    AnchorLink,
+                });
             }
+        });
 
-            if (Image_Type === "Featuring_Image" && Image_OrderNum !== null) {
-                Posts[Blog_id].FPic = Image_Path;
-                Posts[Blog_id].FPicAlt = Image_Alt;
+        // Process Images
+        let featureImage = null, featureImageAlt = null;
+        images.forEach(image => {
+            if (image.Image_Type === "Featuring_Image") {
+                featureImage = image.Image_Path;
+                featureImageAlt = image.Image_Alt;
+            } else {
+                formattedSections.push({
+                    Section_OrderNum: image.Image_OrderNum,
+                    Type: "Img",
+                    ImgPath: image.Image_Path,
+                    ImgAlt: image.Image_Alt,
+                });
             }
+        });
 
-            if (SectionType && Section_OrderNum !== null) {
-                const existingSection = Posts[Blog_id].Sections.find(
-                    section =>
-                        section.Section_OrderNum === Number(Section_OrderNum) &&
-                        section.Type === SectionType
-                );
+        // Process Tables
+        tables.forEach(table => {
+            formattedSections.push({
+                Section_OrderNum: table.Table_OrderNum,
+                Type: "Table",
+                Headers: table.Table_Headers.split(','),
+                Content: JSON.parse(table.Table_content),
+            });
+        });
 
-                if (!existingSection) {
-                    Posts[Blog_id].Sections.push({
-                        Section_OrderNum: Number(Section_OrderNum),
-                        Type: SectionType,
-                        Content: Section_Content,
-                        AnchorLink,
-                    });
-                }
-            }
+        // Process FAQs
+        const formattedFAQs = faqs.map(faq => ({
+            id: faq.Faq_id,
+            [`Qs${faq.Faq_id}`]: faq.Faq_Que,
+            [`Ans${faq.Faq_id}`]: faq.Faq_Ans,
+        }));
 
-            if (Image_Type === "Img" && Image_OrderNum !== null) {
-                const existingImage = Posts[Blog_id].Sections.find(
-                    section =>
-                        section.Section_OrderNum === Number(Image_OrderNum) &&
-                        section.Type === "Img" &&
-                        section.ImgPath === Image_Path
-                );
-
-                if (!existingImage) {
-                    Posts[Blog_id].Sections.push({
-                        Section_OrderNum: Number(Image_OrderNum),
-                        Type: "Img",
-                        ImgPath: Image_Path,
-                        ImgAlt: Image_Alt,
-                    });
-                }
-            }
-
-            if (Table_OrderNum !== null) {
-                const existingTable = Posts[Blog_id].Sections.find(
-                    section =>
-                        section.Section_OrderNum === Number(Table_OrderNum) &&
-                        section.Type === "Table"
-                );
-
-                if (!existingTable) {
-                    Posts[Blog_id].Sections.push({
-                        Section_OrderNum: Number(Table_OrderNum),
-                        Type: "Table",
-                        Headers: Table_Headers.split(',').map(header => header.trim()),
-                        Content: JSON.parse(Table_content),
-                    });
-                }
-
-            }
-
-            if (Faq_id !== null) {
-                const existingFaq = Posts[Blog_id].faqs.find(
-                    faq =>
-                        faq.id === Number(Faq_id)
-                );
-                if (!existingFaq) {
-                    Posts[Blog_id].faqs.push({
-                        id: Number(Faq_id),
-                        [`Qs${Faq_id}`]: Faq_Que,
-                        [`Ans${Faq_id}`]: Faq_Ans,
-                    });
-                }
-            }
-        })
-
-        const formattedData = Object.values(Posts)
-        if (!formattedData.length) {
-            return null
-        }
-        else {
-            return formattedData[0]
-        }
+        // Construct Final Object
+        return {
+            id: post.Blog_id,
+            Title: post.Blog_Title,
+            Category: post.Category,
+            FPic: featureImage,
+            FPicAlt: featureImageAlt,
+            Sections: formattedSections,
+            faqs: formattedFAQs,
+            RelatedPosts: post.RelatedPosts ? post.RelatedPosts.split(',') : [],
+            NumOfEntries: post.NumOfEntries,
+            MetaTitle: post.MetaTitle,
+            MetaDescription: post.MetaDescription,
+            Permalink: post.Permalink,
+            Keywords: post.Keywords,
+            PublishingDate: post.PublishingDate,
+        };
     } catch (err) {
         console.error(err);
         return null;
@@ -626,30 +543,40 @@ export async function getPostById(postId) {
 }
 export async function DeleteAFolderFromCloudinary(folderName) {
     try {
-        if (!folderName) {
-            return false;
-        }
+        if (!folderName) return false;
 
-        // Fetch all resources inside the folder
-        const resources = await cloudinary.v2.api.resources({
+        // Fetch images first
+        let resources = await cloudinary.v2.api.resources({
             type: "upload",
-            prefix: folderName, // Get all files in the folder
+            prefix: folderName, 
+            max_results: 500
         });
 
-        // If there are resources, delete them first
         if (resources.resources.length > 0) {
-            const publicIds = resources.resources.map((file) => file.public_id);
+            const publicIds = resources.resources.map(file => file.public_id);
 
             await cloudinary.v2.api.delete_resources(publicIds);
+
+            // Wait 5 seconds to ensure Cloudinary processes the deletion
+            await new Promise(resolve => setTimeout(resolve, 5000));
+
+            // Fetch again to confirm all images are gone
+            resources = await cloudinary.v2.api.resources({
+                type: "upload",
+                prefix: folderName
+            });
+
+            if (resources.resources.length > 0) {
+                console.error("Delete error: Some images were not removed:", resources.resources);
+                return false;
+            }
         }
 
-        // Now try deleting the folder
         await cloudinary.v2.api.delete_folder(folderName);
-
         return true;
     } catch (err) {
-        if (err.error && err.error.message === `Can't find folder with path ${folderName}`) {
-            return true
+        if (err.error?.message === `Can't find folder with path ${folderName}`) {
+            return true; 
         }
         console.error(err);
         return false;
@@ -1101,6 +1028,63 @@ export async function getCreds() {
         console.error(err)
     }
 }
+export async function backupFolder(folderName, backupFolderName) {
+    try {
+        // Fetch all files in the original folder
+        const resources = await cloudinary.v2.api.resources({
+            type: "upload",
+            prefix: folderName
+        });
+
+        if (resources.resources.length === 0) {
+            return true;
+        }
+
+        for (const resource of resources.resources) {
+            const publicId = resource.public_id;
+            const newPublicId = publicId.replace(folderName, backupFolderName);
+
+            // Upload the same image to the backup folder instead of renaming
+            await cloudinary.v2.uploader.upload(resource.secure_url, {
+                public_id: newPublicId,
+                folder: backupFolderName
+            });
+        }
+        return true;
+    } catch (err) {
+        console.error("Error in folder backup:", err);
+        return false;
+    }
+}
+export async function revertFolder(backupFolderName, originalFolderName) {
+    try {
+
+        // Fetch all files in the backup folder
+        const resources = await cloudinary.v2.api.resources({
+            type: "upload",
+            prefix: backupFolderName
+        });
+
+        if (resources.resources.length === 0) {
+            return false;
+        }
+
+        for (const resource of resources.resources) {
+            const backupPublicId = resource.public_id;
+            const originalPublicId = backupPublicId.replace(backupFolderName, originalFolderName);
+
+            // Upload the image back to the original folder instead of renaming
+            await cloudinary.v2.uploader.upload(resource.secure_url, {
+                public_id: originalPublicId,
+                folder: originalFolderName
+            });
+        }
+        return true;
+    } catch (err) {
+        console.error("Error in folder revert:", err);
+        return false;
+    }
+}
 export async function UploadNewBlog(blog) {
     const connection = await pool.getConnection()
     try {
@@ -1108,22 +1092,40 @@ export async function UploadNewBlog(blog) {
         const sections = blog.Sections
         const faqs = blog.faqs ? blog.faqs : []
         const rp = blog.RelatedPosts
-        const RelatedPosts = rp.length > 0 ? rp.join(',') : NULL
+        const RelatedPosts = rp.length > 0 ? rp.join(',') : null
 
-        await connection.query(`
-            INSERT INTO Posts (id, Title, Category, MetaTitle, MetaDescription, Permalink, Keywords, RelatedPosts, NumOfEntries)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-            Title = VALUES(Title),
-            Category = VALUES(Category),
-            MetaTitle = VALUES(MetaTitle),
-            MetaDescription = VALUES(MetaDescription),
-            Permalink = VALUES(Permalink),
-            Keywords = VALUES(Keywords),
-            RelatedPosts = VALUES(RelatedPosts),
-            NumOfEntries = VALUES(NumOfEntries)
-            `, [blog.id, blog.Title, blog.Category, blog.MetaTitle, blog.MetaDescription, blog.Permalink, blog.Keywords, RelatedPosts, blog.NumOfEntries]
-        )
+        if(RelatedPosts === null){
+            await connection.query(`
+                INSERT INTO Posts (id, Title, Category, MetaTitle, MetaDescription, Permalink, Keywords, NumOfEntries)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                Title = VALUES(Title),
+                Category = VALUES(Category),
+                MetaTitle = VALUES(MetaTitle),
+                MetaDescription = VALUES(MetaDescription),
+                Permalink = VALUES(Permalink),
+                Keywords = VALUES(Keywords),
+                NumOfEntries = VALUES(NumOfEntries)
+                `, [blog.id, blog.Title, blog.Category, blog.MetaTitle, blog.MetaDescription, blog.Permalink, blog.Keywords, blog.NumOfEntries]
+            )
+        }
+        else{
+            await connection.query(`
+                INSERT INTO Posts (id, Title, Category, MetaTitle, MetaDescription, Permalink, Keywords, RelatedPosts, NumOfEntries)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                Title = VALUES(Title),
+                Category = VALUES(Category),
+                MetaTitle = VALUES(MetaTitle),
+                MetaDescription = VALUES(MetaDescription),
+                Permalink = VALUES(Permalink),
+                Keywords = VALUES(Keywords),
+                RelatedPosts = VALUES(RelatedPosts),
+                NumOfEntries = VALUES(NumOfEntries)
+                `, [blog.id, blog.Title, blog.Category, blog.MetaTitle, blog.MetaDescription, blog.Permalink, blog.Keywords, RelatedPosts, blog.NumOfEntries]
+            )
+        }
+
         await connection.query(`DELETE FROM Sections WHERE Post_id = ?`, [blog.id])
         await connection.query(`DELETE FROM Images WHERE Post_id = ?`, [blog.id])
         await connection.query(`DELETE FROM BlogTables WHERE Post_id = ?`, [blog.id])

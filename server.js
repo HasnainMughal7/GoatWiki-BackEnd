@@ -4,8 +4,8 @@ import cors from 'cors'
 import jwt from 'jsonwebtoken'
 import rateLimit from 'express-rate-limit'
 import NodeCache from 'node-cache'
+import { escapeInject, dangerouslySkipEscape } from 'vite-plugin-ssr'
 import {
-    getAllPosts,
     getPostByLink,
     getOneForCard,
     getAllForNavAndAP,
@@ -26,23 +26,26 @@ import {
     UploadNewScripts,
     ChangeCreds,
     getCreds,
-    DestroyImages
+    DestroyImages,
+    backupFolder,
+    revertFolder
 }
     from './database.js'
 import { generateSitemap } from './sitemap-generator.js'
 
 dotenv.config()
 const app = express()
+app.set('trust proxy', 1)
 app.use(express.json())
 
-const cache = new NodeCache({ stdTTL: 3600, checkperiod: 600 })
+const cache = new NodeCache({ stdTTL: 86400, checkperiod: 7201 })
 const cachePrefix = "cache:"
 
 app.use(cors())
 
 const limiter = rateLimit({
     windowMs: 10 * 60 * 1000,
-    max: 500, // Limit each IP to 400 requests per 10 minutes
+    max: 600, // Limit each IP to 600 requests per 10 minutes
     message: 'Too many requests from this IP, please try again after 15 minutes',
     standardHeaders: true,
     legacyHeaders: false,
@@ -69,16 +72,75 @@ function ResetCache() {
 const SecretKey = "ALLAH"
 
 
+app.get("/api/CronJob", async (req, res) => {
+    try {
+        res.send("OK")
+    } catch (error) {
+        console.error(error.stack)
+        res.status(500).send('Something broke!')
+    }
+})
+app.get('*', checkCache(cachePrefix + "HTML"), async (req, res, next) => {
+    try {
+        const cacheKey = cachePrefix + "HTML"
+        const cachedData = cache.get(cacheKey)
+        if (cachedData) {
+            return res.send(cachedData)
+        }
+        else{
+        // Scripts ko backend se fetch karein
+        const scriptsData = await getScripts()
+        const AdsenseObj = scriptsData.find((dat) => dat.ScriptCategory === "adsense");
+
+        let adsenseMeta = "";
+        let adsenseScript = "";
+
+        if (AdsenseObj) {
+            const htmlScript = AdsenseObj.Sections.find(section => section.ScriptType === "HtmlScriptTag");
+            const metaTag = AdsenseObj.Sections.find(section => section.ScriptType === "MetaTag");
+
+            if (htmlScript) {
+                adsenseScript = dangerouslySkipEscape(htmlScript.ScriptContent);
+            }
+            if (metaTag) {
+                adsenseMeta = dangerouslySkipEscape(metaTag.ScriptContent);
+            }
+        }
+
+        // Final HTML response
+        const pageHtml = escapeInject`<!DOCTYPE html>
+        <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>GoatWiki</title>
+                ${adsenseMeta}
+                ${adsenseScript}
+            </head>
+            <body>
+                <div id="root">${dangerouslySkipEscape('<!-- React App Will Mount Here -->')}</div>
+            </body>
+        </html>`;
+
+        setCache(cacheKey, pageHtml)
+        return res.send(pageHtml);
+    }
+    } catch (error) {
+        console.error("Error fetching scripts:", error);
+        next();
+    }
+});
 app.get("/api/getAllForNavAndAP", checkCache(cachePrefix + "AllForNavAndAP"), async (req, res) => {
     try {
-        const data = await getAllForNavAndAP()
         const cacheKey = cachePrefix + "AllForNavAndAP"
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
             return res.send(cachedData)
         }
-        setCache(cacheKey, data)
-        res.send(data)
+        else {
+            const data = await getAllForNavAndAP()
+            setCache(cacheKey, data)
+            return res.send(data)
+        }
 
     } catch (error) {
         console.error(error.stack)
@@ -87,14 +149,16 @@ app.get("/api/getAllForNavAndAP", checkCache(cachePrefix + "AllForNavAndAP"), as
 })
 app.get("/api/getIdOfAll", checkCache(cachePrefix + "IdOfAll"), async (req, res) => {
     try {
-        const data = await getIdOfAll()
         const cacheKey = cachePrefix + "IdOfAll"
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
             return res.send(cachedData)
         }
-        setCache(cacheKey, data)
-        res.send(data);
+        else {
+            const data = await getIdOfAll()
+            setCache(cacheKey, data)
+            return res.send(data);
+        }
 
     } catch (error) {
         console.error(error.stack)
@@ -103,14 +167,16 @@ app.get("/api/getIdOfAll", checkCache(cachePrefix + "IdOfAll"), async (req, res)
 })
 app.get("/api/getAllForCategories", checkCache(cachePrefix + "AllForCategories"), async (req, res) => {
     try {
-        const data = await getAllForCategories()
         const cacheKey = cachePrefix + "AllForCategories"
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
             return res.send(cachedData)
         }
-        setCache(cacheKey, data)
-        res.send(data)
+        else {
+            const data = await getAllForCategories()
+            setCache(cacheKey, data)
+            return res.send(data)
+        }
     } catch (error) {
         console.error(error.stack);
         res.status(500).send('Something broke!');
@@ -122,12 +188,12 @@ app.get("/api/GetOneByLink", async (req, res) => {
     try {
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
-            res.send(cachedData);
+            return res.send(cachedData);
         }
-        else{
+        else {
             const data = await getPostByLink(link);
             setCache(cacheKey, data);
-            res.send(data)
+            return res.send(data)
         }
     } catch (error) {
         console.error(error.stack);
@@ -140,12 +206,12 @@ app.get("/api/GetOneById", async (req, res) => {
     try {
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
-            res.send(cachedData)
+            return res.send(cachedData)
         }
-        else{
+        else {
             const data = await getPostById(id)
             setCache(cacheKey, data)
-            res.send(data)
+            return res.send(data)
         }
     } catch (error) {
         console.error(error.stack)
@@ -158,12 +224,12 @@ app.get("/api/getOneForCard", async (req, res) => {
     try {
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
-            res.send(cachedData)
+            return res.send(cachedData)
         }
         else {
             const data = await getOneForCard(id);
             setCache(cacheKey, data);
-            res.send(data)
+            return res.send(data)
         }
     } catch (error) {
         console.error(error.stack);
@@ -172,15 +238,15 @@ app.get("/api/getOneForCard", async (req, res) => {
 })
 app.get("/api/getPrivacyPolicy", checkCache(cachePrefix + "PrivacyPolicy"), async (req, res) => {
     try {
-        const data = await getPrivacyPolicy()
         const cacheKey = cachePrefix + "PrivacyPolicy"
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
             return res.send(cachedData)
         }
         else {
+            const data = await getPrivacyPolicy()
             setCache(cacheKey, data)
-            res.send(data)
+            return res.send(data)
         }
     } catch (error) {
         console.error(error.stack);
@@ -248,6 +314,7 @@ app.post("/api/UploadNewCreds", async (req, res) => {
         const response = await ChangeCreds(data)
         if (response) {
             res.json({ msg: 'SUCCESSFUL' })
+            ResetCache()
         }
         else {
             res.json({ msg: 'UNSUCCESSFUL' })
@@ -260,15 +327,15 @@ app.post("/api/UploadNewCreds", async (req, res) => {
 })
 app.get("/api/getTermsAndConditions", checkCache(cachePrefix + "TermsAndConditions"), async (req, res) => {
     try {
-        const data = await getTermsAndConditions()
         const cacheKey = cachePrefix + "TermsAndConditions"
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
             return res.send(cachedData)
         }
         else {
+            const data = await getTermsAndConditions()
             setCache(cacheKey, data)
-            res.send(data)
+            return res.send(data)
         }
     } catch (error) {
         console.error(error.stack);
@@ -277,22 +344,39 @@ app.get("/api/getTermsAndConditions", checkCache(cachePrefix + "TermsAndConditio
 })
 app.get("/api/getAbout", checkCache(cachePrefix + "About"), async (req, res) => {
     try {
-        const data = await getAbout()
         const cacheKey = cachePrefix + "About"
         const cachedData = cache.get(cacheKey)
         if (cachedData) {
             return res.send(cachedData)
         }
         else {
+            const data = await getAbout()
             setCache(cacheKey, data)
-            res.send(data)
+            return res.send(data)
         }
     } catch (error) {
         console.error(error.stack);
         res.status(500).send('Something broke!');
     }
 })
-app.get("/api/getScripts", async (req, res) => {
+app.get("/api/getScripts", checkCache(cachePrefix + "Scripts"), async (req, res) => {
+    try {
+        const cacheKey = cachePrefix + "Scripts"
+        const cachedData = cache.get(cacheKey)
+        if (cachedData) {
+            return res.send(cachedData)
+        }
+        else {
+            const data = await getScripts()
+            setCache(cacheKey, data)
+            return res.send(data)
+        }
+    } catch (error) {
+        console.error(error.stack);
+        res.status(500).send('Something broke!');
+    }
+})
+app.get("/api/getScriptsForAdmin", async (req, res) => {
     try {
         const data = await getScripts()
         res.send(data)
@@ -329,6 +413,38 @@ app.get("/api/CheckCred", async (req, res) => {
     }
     catch (err) {
         console.error(err)
+    }
+})
+app.post("/api/BackupFolder", async (req, res) => {
+    const { folderName, backupFolderName } = req.body
+
+    try {
+        const backupResponse = await backupFolder(folderName, backupFolderName)
+        if (backupResponse) {
+            return res.json({ msg: "SUCCESSFUL" });
+        } else {
+            res.json({ msg: "UNSUCCESSFUL" });
+            throw new Error("Backup failed");
+        }
+    } catch (err) {
+        console.error(err);
+        res.json({ msg: "UNSUCCESSFUL" });
+    }
+})
+app.post("/api/RevertFolder", async (req, res) => {
+    const { backupFolderName, originalFolderName } = req.body
+
+    try {
+        const revertResponse = await revertFolder(backupFolderName, originalFolderName)
+        if (revertResponse) {
+           return res.json({ msg: "SUCCESSFUL" });
+        } else {
+            res.json({ msg: "UNSUCCESSFUL" });
+            throw new Error("Backup failed");
+        }
+    } catch (err) {
+        console.error(err);
+        return res.json({ msg: "UNSUCCESSFUL" });
     }
 })
 let isProcessing = false
