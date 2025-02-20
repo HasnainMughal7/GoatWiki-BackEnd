@@ -114,15 +114,25 @@ app.get('*', async (req, res, next) => {
 
         // Return Proper HTML
         const pageHtml = `<!DOCTYPE html>
-        <html>
+        <html lang="en">
             <head>
                 <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>GoatWiki</title>
                 ${adsenseMeta}
                 ${adsenseScript}
             </head>
             <body>
-                <div id="root"><!-- React App Will Mount Here --></div>
+                <div id="root">Loading...</div>
+                <script>
+                    // After page loads, load the full React app
+                    document.addEventListener("DOMContentLoaded", function () {
+                        var script = document.createElement("script");
+                        script.src = "/src/main.jsx";
+                        script.type = "module";
+                        document.body.appendChild(script);
+                    });
+                </script>
             </body>
         </html>`;
 
