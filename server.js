@@ -80,16 +80,21 @@ app.get("/api/CronJob", async (req, res) => {
         res.status(500).send('Something broke!')
     }
 })
-app.get('*', checkCache(cachePrefix + "HTML"), async (req, res, next) => {
+app.get('*', async (req, res, next) => {
+    // API Routes should not return HTML
+    if (req.originalUrl.startsWith('/api')) {
+        return next(); // API routes ko process hone do
+    }
+
     try {
-        const cacheKey = cachePrefix + "HTML"
-        const cachedData = cache.get(cacheKey)
+        const cacheKey = cachePrefix + "HTML";
+        const cachedData = cache.get(cacheKey);
         if (cachedData) {
-            return res.send(cachedData)
+            return res.send(cachedData);
         }
-        else{
-        // Scripts ko backend se fetch karein
-        const scriptsData = await getScripts()
+
+        // Fetch scripts from database
+        const scriptsData = await getScripts();
         const AdsenseObj = scriptsData.find((dat) => dat.ScriptCategory === "adsense");
 
         let adsenseMeta = "";
@@ -100,30 +105,29 @@ app.get('*', checkCache(cachePrefix + "HTML"), async (req, res, next) => {
             const metaTag = AdsenseObj.Sections.find(section => section.ScriptType === "MetaTag");
 
             if (htmlScript) {
-                adsenseScript = htmlScript.ScriptContent;
+                adsenseScript = dangerouslySkipEscape(htmlScript.ScriptContent);
             }
             if (metaTag) {
-                adsenseMeta = metaTag.ScriptContent;
+                adsenseMeta = dangerouslySkipEscape(metaTag.ScriptContent);
             }
         }
 
-        // Final HTML response
+        // Return Proper HTML
         const pageHtml = `<!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="UTF-8">
-        <title>GoatWiki</title>
-        ${adsenseMeta}
-        ${adsenseScript}
-    </head>
-    <body>
-        <div id="root"><!-- React App Will Mount Here --></div>
-    </body>
-</html>`;
+        <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>GoatWiki</title>
+                ${adsenseMeta}
+                ${adsenseScript}
+            </head>
+            <body>
+                <div id="root"><!-- React App Will Mount Here --></div>
+            </body>
+        </html>`;
 
-        setCache(cacheKey, pageHtml)
+        setCache(cacheKey, pageHtml);
         return res.send(pageHtml);
-    }
     } catch (error) {
         console.error("Error fetching scripts:", error);
         next();
