@@ -100,10 +100,10 @@ app.get('*', checkCache(cachePrefix + "HTML"), async (req, res, next) => {
             const metaTag = AdsenseObj.Sections.find(section => section.ScriptType === "MetaTag");
 
             if (htmlScript) {
-                adsenseScript = dangerouslySkipEscape(htmlScript.ScriptContent);
+                adsenseScript = htmlScript.ScriptContent;
             }
             if (metaTag) {
-                adsenseMeta = dangerouslySkipEscape(metaTag.ScriptContent);
+                adsenseMeta = metaTag.ScriptContent;
             }
         }
 
