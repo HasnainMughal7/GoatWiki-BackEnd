@@ -108,18 +108,18 @@ app.get('*', checkCache(cachePrefix + "HTML"), async (req, res, next) => {
         }
 
         // Final HTML response
-        const pageHtml = escapeInject`<!DOCTYPE html>
-        <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>GoatWiki</title>
-                ${adsenseMeta}
-                ${adsenseScript}
-            </head>
-            <body>
-                <div id="root">${dangerouslySkipEscape('<!-- React App Will Mount Here -->')}</div>
-            </body>
-        </html>`;
+        const pageHtml = `<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <title>GoatWiki</title>
+        ${adsenseMeta}
+        ${adsenseScript}
+    </head>
+    <body>
+        <div id="root"><!-- React App Will Mount Here --></div>
+    </body>
+</html>`;
 
         setCache(cacheKey, pageHtml)
         return res.send(pageHtml);
