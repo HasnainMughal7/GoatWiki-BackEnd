@@ -143,6 +143,30 @@ app.get('*', async (req, res, next) => {
         next();
     }
 });
+app.get('/api/getPostMetadata', async (req, res) => {
+    const { permalink } = req.query;
+    const cacheKey = `${cachePrefix}MetaDataByPermalink:${permalink}`
+    const cachedData = cache.get(cacheKey)
+    if (cachedData) {
+        return res.send(cachedData);
+    }
+    else {
+        const post = await getPostByLink(permalink);
+        if (post) {
+            const data = {
+                title: post.Title,
+                metaTitle: post.metaTitle,
+                metaDescription: post.metaDescription,
+                Keywords: post.keywords,
+                PublishingDate: post.PublishingDate
+            }
+            setCache(cacheKey, data)
+            return res.json(data)
+        } else {
+            res.status(404).send("Post not found");
+        }
+    }
+})
 app.get("/api/getAllForNavAndAP", checkCache(cachePrefix + "AllForNavAndAP"), async (req, res) => {
     try {
         const cacheKey = cachePrefix + "AllForNavAndAP"
@@ -451,7 +475,7 @@ app.post("/api/RevertFolder", async (req, res) => {
     try {
         const revertResponse = await revertFolder(backupFolderName, originalFolderName)
         if (revertResponse) {
-           return res.json({ msg: "SUCCESSFUL" });
+            return res.json({ msg: "SUCCESSFUL" });
         } else {
             res.json({ msg: "UNSUCCESSFUL" });
             throw new Error("Backup failed");
