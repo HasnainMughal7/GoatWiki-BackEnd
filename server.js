@@ -4,7 +4,6 @@ import cors from 'cors'
 import jwt from 'jsonwebtoken'
 import rateLimit from 'express-rate-limit'
 import NodeCache from 'node-cache'
-import { escapeInject, dangerouslySkipEscape } from 'vite-plugin-ssr'
 import {
     getPostByLink,
     getOneForCard,
@@ -38,7 +37,7 @@ const app = express()
 app.set('trust proxy', 1)
 app.use(express.json())
 
-const cache = new NodeCache({ stdTTL: 86400, checkperiod: 7201 })
+const cache = new NodeCache({ stdTTL: 7000, checkperiod: 1800 })
 const cachePrefix = "cache:"
 
 app.use(cors())
@@ -78,93 +77,6 @@ app.get("/api/CronJob", async (req, res) => {
     } catch (error) {
         console.error(error.stack)
         res.status(500).send('Something broke!')
-    }
-})
-app.get('*', async (req, res, next) => {
-    // API Routes should not return HTML
-    if (req.originalUrl.startsWith('/api')) {
-        return next(); // API routes ko process hone do
-    }
-
-    try {
-        const cacheKey = cachePrefix + "HTML";
-        const cachedData = cache.get(cacheKey);
-        if (cachedData) {
-            return res.send(cachedData);
-        }
-
-        // Fetch scripts from database
-        const scriptsData = await getScripts();
-        const AdsenseObj = scriptsData.find((dat) => dat.ScriptCategory === "adsense");
-
-        let adsenseMeta = "";
-        let adsenseScript = "";
-
-        if (AdsenseObj) {
-            const htmlScript = AdsenseObj.Sections.find(section => section.ScriptType === "HtmlScriptTag");
-            const metaTag = AdsenseObj.Sections.find(section => section.ScriptType === "MetaTag");
-
-            if (htmlScript) {
-                adsenseScript = dangerouslySkipEscape(htmlScript.ScriptContent);
-            }
-            if (metaTag) {
-                adsenseMeta = dangerouslySkipEscape(metaTag.ScriptContent);
-            }
-        }
-
-        // Return Proper HTML
-        const pageHtml = `<!DOCTYPE html>
-        <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>GoatWiki</title>
-                ${adsenseMeta}
-                ${adsenseScript}
-            </head>
-            <body>
-                <div id="root">Loading...</div>
-                <script>
-                    // After page loads, load the full React app
-                    document.addEventListener("DOMContentLoaded", function () {
-                        var script = document.createElement("script");
-                        script.src = "/src/main.jsx";
-                        script.type = "module";
-                        document.body.appendChild(script);
-                    });
-                </script>
-            </body>
-        </html>`;
-
-        setCache(cacheKey, pageHtml);
-        return res.send(pageHtml);
-    } catch (error) {
-        console.error("Error fetching scripts:", error);
-        next();
-    }
-});
-app.get('/api/getPostMetadata', async (req, res) => {
-    const permalink = req.query.link
-    const cacheKey = `${cachePrefix}MetaDataByPermalink:${permalink}`
-    const cachedData = cache.get(cacheKey)
-    if (cachedData) {
-        return res.send(cachedData);
-    }
-    else {
-        const post = await getPostByLink(permalink);
-        if (post) {
-            const data = {
-                title: post.Title,
-                metaTitle: post.metaTitle,
-                metaDescription: post.metaDescription,
-                Keywords: post.keywords,
-                PublishingDate: post.PublishingDate
-            }
-            setCache(cacheKey, data)
-            return res.json(data)
-        } else {
-            res.status(404).send("Post not found");
-        }
     }
 })
 app.get("/api/getAllForNavAndAP", checkCache(cachePrefix + "AllForNavAndAP"), async (req, res) => {
@@ -466,7 +378,7 @@ app.post("/api/BackupFolder", async (req, res) => {
         }
     } catch (err) {
         console.error(err);
-        res.json({ msg: "UNSUCCESSFUL" });
+        return res.json({ msg: "UNSUCCESSFUL" });
     }
 })
 app.post("/api/RevertFolder", async (req, res) => {
@@ -475,7 +387,7 @@ app.post("/api/RevertFolder", async (req, res) => {
     try {
         const revertResponse = await revertFolder(backupFolderName, originalFolderName)
         if (revertResponse) {
-            return res.json({ msg: "SUCCESSFUL" });
+           return res.json({ msg: "SUCCESSFUL" });
         } else {
             res.json({ msg: "UNSUCCESSFUL" });
             throw new Error("Backup failed");
