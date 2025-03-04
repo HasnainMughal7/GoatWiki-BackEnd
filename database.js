@@ -602,7 +602,8 @@ export async function getAllForNavAndAP() {
         SELECT
         P.id,
         P.Title,
-        P.Permalink
+        P.Permalink,
+        P.PublishingDate
         FROM Posts P
         ORDER BY P.id;
         `)
@@ -614,6 +615,7 @@ export async function getAllForNavAndAP() {
                 id,
                 Title,
                 Permalink,
+                PublishingDate,
             } = row
 
             if (!posts[id]) {
@@ -621,6 +623,7 @@ export async function getAllForNavAndAP() {
                     id,
                     Title,
                     Permalink,
+                    PublishingDate,
                 };
             }
         })
@@ -629,6 +632,7 @@ export async function getAllForNavAndAP() {
                 id: post.id,
                 Title: post.Title,
                 metaPermalink: post.Permalink,
+                PublishingDate: post.PublishingDate,
             };
         });
         return formattedData
