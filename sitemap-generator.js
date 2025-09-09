@@ -57,25 +57,25 @@ export async function generateSitemap() {
 }
 
 // Function to upload sitemap.xml to Hostinger via FTP
-async function uploadToHostinger() {
-  const client = new ftp.Client();
-  client.ftp.verbose = true;
+// async function uploadToHostinger() {
+//   const client = new ftp.Client();
+//   client.ftp.verbose = true;
 
-  try {
-    await client.access({
-      host: process.env.FTP_HOST,
-      user: process.env.FTP_USER,
-      password: process.env.FTP_PASS,
-      port: 21,
-      secure: false,
-    });
+//   try {
+//     await client.access({
+//       host: process.env.FTP_HOST,
+//       user: process.env.FTP_USER,
+//       password: process.env.FTP_PASS,
+//       port: 21,
+//       secure: false,
+//     });
 
-    await client.uploadFrom('sitemap.xml', '/public_html/sitemap.xml');
-    return true;
-  } catch (err) {
-    console.error('❌ FTP Upload Error:', err);
-    return false;
-  } finally {
-    client.close();
-  }
-}
+//     await client.uploadFrom('sitemap.xml', '/public_html/sitemap.xml');
+//     return true;
+//   } catch (err) {
+//     console.error('❌ FTP Upload Error:', err);
+//     return false;
+//   } finally {
+//     client.close();
+//   }
+// }
