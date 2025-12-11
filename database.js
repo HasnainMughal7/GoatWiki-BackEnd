@@ -241,7 +241,7 @@ export async function getAllPosts() {
 }
 export async function getPostByLink(Permalink) {
     try {
-        await pool.query('SET SESSION max_statement_time = 100;')
+        await pool.query('SET SESSION max_execution_time=100;')
         // Fetch main post details
         const [postRows] = await pool.query(`
             SELECT 
@@ -403,7 +403,7 @@ export async function getPostByLink(Permalink) {
 }
 export async function getPostById(postId) {
     try {
-        await pool.query('SET SESSION max_statement_time = 100;')
+        await pool.query('SET SESSION max_execution_time=100;')
         // Fetch main post details
         const [postRows] = await pool.query(`
             SELECT 
