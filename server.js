@@ -40,10 +40,7 @@ app.use(express.json())
 const cache = new NodeCache({ stdTTL: 7000, checkperiod: 1800 })
 const cachePrefix = "cache:"
 
-app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    credentials: true
-}))
+app.use(cors())
 
 const limiter = rateLimit({
     windowMs: 10 * 60 * 1000,
